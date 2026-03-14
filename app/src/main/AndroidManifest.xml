@@ -44,6 +44,26 @@
             android:foregroundServiceType="dataSync">
         </service>
 
+        <service
+            android:name=".ReportService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <activity
+            android:name=".WakeActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="true"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Transparent" />
+
+        <receiver
+            android:name=".AlarmReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

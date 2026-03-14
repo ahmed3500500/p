@@ -16,6 +16,8 @@ public class BootReceiver extends BroadcastReceiver {
                 || "android.intent.action.QUICKBOOT_POWERON".equals(action)
                 || "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED".equals(action)) {
 
+            AlarmScheduler.scheduleNext(context, AlarmScheduler.TEST_INTERVAL_MS);
+
             Intent serviceIntent = new Intent(context, CallMonitorService.class);
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

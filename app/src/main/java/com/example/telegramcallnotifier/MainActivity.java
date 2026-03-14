@@ -48,6 +48,8 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_main);
 
+        AlarmScheduler.scheduleNext(this, AlarmScheduler.TEST_INTERVAL_MS);
+
         telegramSender = new TelegramSender(this);
 
         btnToggleService = findViewById(R.id.btnToggleService);
