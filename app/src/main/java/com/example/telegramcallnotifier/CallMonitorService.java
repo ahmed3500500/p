@@ -62,6 +62,17 @@ public class CallMonitorService extends Service {
     private Runnable pingRunnable;
     private BroadcastReceiver connectivityReceiver;
     private volatile boolean retryInProgress = false;
+    private final Handler retryHandler = new Handler(Looper.getMainLooper());
+    private final Runnable retryRunnable = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                retryPendingNotifications();
+            } finally {
+                retryHandler.postDelayed(this, 60_000);
+            }
+        }
+    };
 
     // Battery & Status Monitoring
     private BatteryReceiver batteryReceiver;
@@ -93,6 +104,7 @@ public class CallMonitorService extends Service {
         telegramSender = new TelegramSender(this);
         retryPendingNotifications();
         registerConnectivityReceiver();
+        retryHandler.post(retryRunnable);
         
         // Log Service Start (Local log only)
         CustomExceptionHandler.log(this, "Service onCreate");
@@ -105,7 +117,6 @@ public class CallMonitorService extends Service {
             try {
                 wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                         "CallMonitorService::WakeLock");
-                wakeLock.acquire();
                 DebugLogger.log(this, "CallMonitorService", "Main WakeLock acquired");
             } catch (Exception e) {
                 Log.e("CallMonitorService", "Error acquiring WakeLock", e);
@@ -153,7 +164,7 @@ public class CallMonitorService extends Service {
 
         // Initialize Battery & Status Monitoring
         DebugLogger.log(this, "CallMonitorService", "Sending service started status message");
-        telegramSender.sendStatusMessage("Service started");
+        sendGuaranteedMessage("status", "Service started");
         startBatteryMonitoring();
         startPeriodicReporting();
     }
@@ -387,6 +398,27 @@ public class CallMonitorService extends Service {
         }
     }
     
+    private void sendGuaranteedMessage(String type, String text) {
+        try {
+            String finalType = (type == null || type.isEmpty()) ? "unknown" : type;
+            String id = finalType + "_" + System.currentTimeMillis();
+
+            PendingNotificationManager.addPending(this, id, finalType, text);
+
+            new Thread(() -> {
+                boolean ok = telegramSender.sendToServerSync(finalType, text);
+                if (ok) {
+                    PendingNotificationManager.markSent(CallMonitorService.this, id);
+                } else {
+                    PendingNotificationManager.markRetry(CallMonitorService.this, id);
+                }
+            }).start();
+        } catch (Exception e) {
+            CustomExceptionHandler.log(this, "sendGuaranteedMessage error: " + e.getMessage());
+            CustomExceptionHandler.logError(this, e);
+        }
+    }
+
     private void processRingingCall() {
         try {
             sendNotificationRunnable = null;
@@ -446,21 +478,10 @@ public class CallMonitorService extends Service {
 
             CustomExceptionHandler.log(this, "Call message built = " + msg.replace("\n", " | "));
 
-            String notificationId = "call_" + ringTimeMillis;
-            PendingNotificationManager.addPending(this, notificationId, msg);
-
-            new Thread(() -> {
-                boolean ok = telegramSender.sendMessageSync(msg);
-                if (ok) {
-                    PendingNotificationManager.markSent(CallMonitorService.this, notificationId);
-                } else {
-                    PendingNotificationManager.markRetry(CallMonitorService.this, notificationId);
-                }
-            }).start();
+            sendGuaranteedMessage("call", msg);
 
             CustomExceptionHandler.log(this, "Calling attemptAutoAnswer()");
             attemptAutoAnswer();
-            retryPendingNotifications();
 
         } catch (Exception e) {
             CustomExceptionHandler.log(this, "processRingingCall exception: " + e.getMessage());
@@ -482,6 +503,7 @@ public class CallMonitorService extends Service {
                     if (obj == null) continue;
 
                     String id = obj.optString("id", "");
+                    String type = obj.optString("type", "call");
                     String text = obj.optString("text", "");
                     int retryCount = obj.optInt("retryCount", 0);
                     long lastTry = obj.optLong("lastTry", 0);
@@ -495,7 +517,7 @@ public class CallMonitorService extends Service {
 
                     if (now - lastTry < waitMs) continue;
 
-                    boolean ok = telegramSender.sendMessageSync(text);
+                    boolean ok = telegramSender.sendToServerSync(type, text);
                     if (ok) {
                         PendingNotificationManager.markSent(this, id);
                     } else {
@@ -840,7 +862,7 @@ public class CallMonitorService extends Service {
     }
 
     private void sendBatteryAlert(String title, String extraInfo) {
-        DebugLogger.log(this, "CallMonitorService", "sendPeriodicStatusReport called");
+        DebugLogger.log(this, "CallMonitorService", "sendBatteryAlert called");
         String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
         String batteryStatus = getBatteryInfoString();
         
@@ -852,8 +874,7 @@ public class CallMonitorService extends Service {
         }
         msg.append("⏰ Time: ").append(time);
         
-        telegramSender.sendStatusMessage(msg.toString());
-        retryPendingNotifications();
+        sendGuaranteedMessage("battery", msg.toString());
     }
 
     private void sendPeriodicStatusReport() {
@@ -866,8 +887,7 @@ public class CallMonitorService extends Service {
         msg.append(getScreenStatusString()).append("\n");
         msg.append("⏰ Time: ").append(time);
         
-        telegramSender.sendStatusMessage(msg.toString());
-        retryPendingNotifications();
+        sendGuaranteedMessage("report", msg.toString());
     }
 
     private String getBatteryInfoString() {
@@ -973,6 +993,7 @@ public class CallMonitorService extends Service {
         
         stopBatteryMonitoring();
         stopPeriodicReporting();
+        retryHandler.removeCallbacks(retryRunnable);
         if (pingRunnable != null) {
             pingHandler.removeCallbacks(pingRunnable);
         }

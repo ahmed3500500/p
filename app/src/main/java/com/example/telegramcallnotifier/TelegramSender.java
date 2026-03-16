@@ -114,7 +114,7 @@ public class TelegramSender {
         });
     }
 
-    private boolean sendToServerSync(String type, String text) {
+    public boolean sendToServerSync(String type, String text) {
         if (text == null || text.isEmpty()) {
             DebugLogger.log(context, TAG, "sendToServerSync skipped: empty text. type=" + type);
             return false;

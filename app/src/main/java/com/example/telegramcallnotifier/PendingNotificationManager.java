@@ -10,22 +10,22 @@ public class PendingNotificationManager {
     private static final String PREF_NAME = "pending_notifications";
     private static final String KEY_ITEMS = "items";
 
-    public static synchronized void addPending(Context context, String id, String text) {
+    public static synchronized void addPending(Context context, String id, String type, String text) {
         try {
             JSONArray arr = getAll(context);
 
             JSONObject obj = new JSONObject();
             obj.put("id", id);
+            obj.put("type", type);
             obj.put("text", text);
             obj.put("createdAt", System.currentTimeMillis());
-            obj.put("sent", false);
             obj.put("retryCount", 0);
-            obj.put("lastTry", 0);
+            obj.put("lastTry", System.currentTimeMillis());
 
             arr.put(obj);
             saveAll(context, arr);
 
-            CustomExceptionHandler.log(context, "Pending added: " + id);
+            CustomExceptionHandler.log(context, "Pending added: " + id + " type=" + type);
         } catch (Exception e) {
             CustomExceptionHandler.log(context, "addPending error: " + e.getMessage());
             CustomExceptionHandler.logError(context, e);
