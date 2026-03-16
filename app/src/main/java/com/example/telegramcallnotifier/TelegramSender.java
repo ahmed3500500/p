@@ -1,6 +1,7 @@
 package com.example.telegramcallnotifier;
 
 import android.content.Context;
+import android.os.PowerManager;
 import android.util.Log;
 
 import java.io.BufferedReader;
@@ -39,6 +40,11 @@ public class TelegramSender {
     public void sendPing() {
         DebugLogger.log(context, TAG, "PING sendPing() called");
         sendToServer("ping", "alive");
+    }
+
+    public boolean sendMessageSync(String message) {
+        DebugLogger.log(context, TAG, "CALL sendMessageSync() called. msg=" + truncate(message, 500));
+        return sendToServerSync("call", message);
     }
 
     public void sendToServer(String type, String text) {
@@ -106,6 +112,77 @@ public class TelegramSender {
                 }
             }
         });
+    }
+
+    private boolean sendToServerSync(String type, String text) {
+        if (text == null || text.isEmpty()) {
+            DebugLogger.log(context, TAG, "sendToServerSync skipped: empty text. type=" + type);
+            return false;
+        }
+        String finalType = (type == null || type.isEmpty()) ? "unknown" : type;
+
+        PowerManager.WakeLock wl = null;
+        HttpURLConnection conn = null;
+        try {
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TelegramCallNotifier:SendLock");
+                wl.acquire(15000);
+            }
+
+            URL url = new URL(SERVER_URL);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(20000);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+            String json = "{"
+                    + "\"api_key\":\"" + escapeJson(SERVER_API_KEY) + "\","
+                    + "\"type\":\"" + escapeJson(finalType) + "\","
+                    + "\"text\":\"" + escapeJson(text) + "\""
+                    + "}";
+
+            byte[] payload = json.getBytes(StandardCharsets.UTF_8);
+            conn.setFixedLengthStreamingMode(payload.length);
+
+            OutputStream os = conn.getOutputStream();
+            os.write(payload);
+            os.flush();
+            os.close();
+
+            int responseCode = conn.getResponseCode();
+            String responseBody = readBody(conn, responseCode >= 200 && responseCode < 300);
+
+            DebugLogger.log(context, TAG, "sendToServerSync response code=" + responseCode);
+            DebugLogger.log(context, TAG, "sendToServerSync response body=" + truncate(responseBody, 2000));
+
+            return isOkResponse(responseCode, responseBody);
+        } catch (Exception e) {
+            DebugLogger.log(context, TAG, "sendToServerSync exception: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            DebugLogger.logError(context, TAG, e);
+            return false;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored) {
+                }
+            }
+            if (wl != null) {
+                try {
+                    if (wl.isHeld()) wl.release();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private static boolean isOkResponse(int code, String body) {
+        if (code != 200 || body == null) return false;
+        String compact = body.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "");
+        return compact.contains("\"ok\":true");
     }
 
     private static String readBody(HttpURLConnection conn, boolean successStream) {
