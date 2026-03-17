@@ -19,23 +19,20 @@ public class WakeActivity extends Activity {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
             DebugLogger.log(this, "WakeActivity", "Applied setShowWhenLocked/setTurnScreenOn");
-        } else {
-            getWindow().addFlags(
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                            | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                            | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-                            | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-            );
-            DebugLogger.log(this, "WakeActivity", "Applied legacy wake flags");
         }
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        DebugLogger.log(this, "WakeActivity", "FLAG_KEEP_SCREEN_ON added");
+        getWindow().addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                        | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                        | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                        | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        );
+        DebugLogger.log(this, "WakeActivity", "Wake flags applied");
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            DebugLogger.log(WakeActivity.this, "WakeActivity", "finish after 20 seconds");
+            DebugLogger.log(WakeActivity.this, "WakeActivity", "finish after 3 seconds");
             finish();
-        }, 20_000);
+        }, 3000);
     }
 
     @Override

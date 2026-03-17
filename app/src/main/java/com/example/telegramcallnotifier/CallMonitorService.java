@@ -57,6 +57,7 @@ public class CallMonitorService extends Service {
     private Runnable sendNotificationRunnable;
     private String pendingNumber = null;
     private int pendingSimSlot = -1;
+    private long lastCallWakeHandledAt = 0L;
 
     private final Handler pingHandler = new Handler(Looper.getMainLooper());
     private Runnable pingRunnable;
@@ -279,6 +280,31 @@ public class CallMonitorService extends Service {
         if (state == TelephonyManager.CALL_STATE_RINGING) {
             CustomExceptionHandler.log(this, "CALL_STATE_RINGING detected. incomingNumber=" + incomingNumber);
             CustomExceptionHandler.log(this, "RINGING on SIM slot=" + simSlot);
+
+            long now = System.currentTimeMillis();
+            if (now - lastCallWakeHandledAt >= 3000L) {
+                lastCallWakeHandledAt = now;
+                try {
+                    PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        PowerManager.WakeLock wl = pm.newWakeLock(
+                                PowerManager.PARTIAL_WAKE_LOCK,
+                                "TelegramCallNotifier:CALL_WAKE"
+                        );
+                        wl.acquire(10_000L);
+                    }
+                } catch (Throwable e) {
+                    DebugLogger.logError(this, "CallMonitorService", e);
+                }
+
+                try {
+                    Intent i = new Intent(this, WakeActivity.class);
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Throwable e) {
+                    DebugLogger.logError(this, "CallMonitorService", e);
+                }
+            }
             
             // 1. Update pending data if available
             // Priority Logic: Prefer the event that contains a valid incoming number.
