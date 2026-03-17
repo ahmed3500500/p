@@ -48,22 +48,6 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(R.layout.activity_main);
 
-        Intent reportServiceIntent = new Intent(this, ReportService.class);
-        reportServiceIntent.setAction("START_FOREGROUND_SERVICE");
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(reportServiceIntent);
-            } else {
-                startService(reportServiceIntent);
-            }
-            DebugLogger.log(this, "MainActivity", "ReportService start requested from onCreate");
-        } catch (Exception e) {
-            DebugLogger.logError(this, "MainActivity", e);
-        }
-
-        AlarmScheduler.scheduleNext(this, AlarmScheduler.TEST_INTERVAL_MS);
-
         telegramSender = new TelegramSender(this);
 
         btnToggleService = findViewById(R.id.btnToggleService);
@@ -177,8 +161,27 @@ public class MainActivity extends AppCompatActivity {
 
     private void stopService() {
         DebugLogger.log(this, "MainActivity", "stopService requested");
-        Intent serviceIntent = new Intent(this, CallMonitorService.class);
-        stopService(serviceIntent);
+
+        try {
+            Intent callIntent = new Intent(this, CallMonitorService.class);
+            stopService(callIntent);
+        } catch (Throwable e) {
+            DebugLogger.logError(this, "MainActivity", e);
+        }
+
+        try {
+            Intent reportIntent = new Intent(this, ReportService.class);
+            stopService(reportIntent);
+        } catch (Throwable e) {
+            DebugLogger.logError(this, "MainActivity", e);
+        }
+
+        try {
+            AlarmScheduler.cancel(this);
+        } catch (Throwable e) {
+            DebugLogger.logError(this, "MainActivity", e);
+        }
+
         updateUI();
         new android.os.Handler().postDelayed(this::updateUI, 500);
     }
@@ -200,7 +203,7 @@ public class MainActivity extends AppCompatActivity {
                 Intent intent = new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM);
                 intent.setData(Uri.parse("package:" + getPackageName()));
                 startActivityForResult(intent, EXACT_ALARM_REQUEST_CODE);
-                Toast.makeText(this, "Please allow exact alarms so the 60-minute report works while the screen is off", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Please allow exact alarms so periodic reports work while the screen is off", Toast.LENGTH_LONG).show();
                 DebugLogger.log(this, "MainActivity", "Requested exact alarm permission");
                 return;
             } catch (Exception e) {
@@ -227,7 +230,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         }
-        startService();
+        startAllCoreServices();
     }
 
     private void checkPermissionsAndStartService() {
@@ -271,20 +274,73 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startService() {
-        Intent serviceIntent = new Intent(this, CallMonitorService.class);
-        try {
-            DebugLogger.log(this, "MainActivity", "startService requested");
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
+        startAllCoreServices();
+    }
 
-            new android.os.Handler().postDelayed(this::updateUI, 500);
+    private void startAllCoreServices() {
+        DebugLogger.log(this, "MainActivity", "startAllCoreServices called");
+
+        requestDefaultDialerRoleIfNeeded();
+
+        try {
+            Intent callIntent = new Intent(this, CallMonitorService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(callIntent);
+            } else {
+                startService(callIntent);
+            }
+            DebugLogger.log(this, "MainActivity", "CallMonitorService start requested");
         } catch (Throwable e) {
             DebugLogger.logError(this, "MainActivity", e);
-            Toast.makeText(this, "Error starting service: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            textStatus.setText("Error: " + e.getMessage());
+        }
+
+        try {
+            Intent reportIntent = new Intent(this, ReportService.class);
+            reportIntent.setAction("START_FOREGROUND_SERVICE");
+            reportIntent.putExtra("sendTelegram", false);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(reportIntent);
+            } else {
+                startService(reportIntent);
+            }
+            DebugLogger.log(this, "MainActivity", "ReportService start requested");
+        } catch (Throwable e) {
+            DebugLogger.logError(this, "MainActivity", e);
+        }
+
+        try {
+            AlarmScheduler.scheduleNext(this, AlarmScheduler.TEST_INTERVAL_MS);
+            DebugLogger.log(this, "MainActivity", "AlarmScheduler.scheduleNext requested");
+        } catch (Throwable e) {
+            DebugLogger.logError(this, "MainActivity", e);
+        }
+
+        new android.os.Handler().postDelayed(this::updateUI, 500);
+    }
+
+    private void requestDefaultDialerRoleIfNeeded() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.app.role.RoleManager roleManager = (android.app.role.RoleManager) getSystemService(Context.ROLE_SERVICE);
+                if (roleManager != null
+                        && roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_DIALER)
+                        && !roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_DIALER)) {
+                    Intent intent = roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_DIALER);
+                    startActivity(intent);
+                    DebugLogger.log(this, "MainActivity", "Requested default dialer role");
+                }
+            } else {
+                android.telecom.TelecomManager telecomManager = (android.telecom.TelecomManager) getSystemService(TELECOM_SERVICE);
+                if (telecomManager != null && !getPackageName().equals(telecomManager.getDefaultDialerPackage())) {
+                    Intent intent = new Intent(android.telecom.TelecomManager.ACTION_CHANGE_DEFAULT_DIALER);
+                    intent.putExtra(android.telecom.TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, getPackageName());
+                    startActivity(intent);
+                    DebugLogger.log(this, "MainActivity", "Requested default dialer package");
+                }
+            }
+        } catch (Exception e) {
+            DebugLogger.logError(this, "MainActivity", e);
         }
     }
 
@@ -292,10 +348,20 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         DebugLogger.log(this, "MainActivity", "onRequestPermissionsResult requestCode=" + requestCode + " grantCount=" + grantResults.length);
+
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            DebugLogger.log(this, "MainActivity", "permissions granted(firstOnly check)=" + granted);
-            if (granted) {
+            boolean allGranted = grantResults.length > 0;
+
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+
+            DebugLogger.log(this, "MainActivity", "permissions allGranted=" + allGranted);
+
+            if (allGranted) {
                 checkExactAlarmAndStart();
             } else {
                 Toast.makeText(this, "Permissions are required for the app to work", Toast.LENGTH_LONG).show();
@@ -309,7 +375,7 @@ public class MainActivity extends AppCompatActivity {
         DebugLogger.log(this, "MainActivity", "onActivityResult requestCode=" + requestCode + " resultCode=" + resultCode + " data=" + data);
 
         if (requestCode == BATTERY_OPTIMIZATION_REQUEST_CODE) {
-            startService();
+            startAllCoreServices();
         } else if (requestCode == EXACT_ALARM_REQUEST_CODE) {
             checkBatteryAndStart();
         }

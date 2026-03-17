@@ -9,12 +9,26 @@ import android.os.PowerManager;
 
 public class AlarmReceiver extends BroadcastReceiver {
 
+    private static final int TELEGRAM_REPORT_EVERY_N_ALARMS = 30;
+    private static final long MIN_DUPLICATE_GAP_MS = 3000L;
+
     @Override
     public void onReceive(Context context, Intent intent) {
         DebugLogger.log(context, "AlarmReceiver", "onReceive action=" + (intent != null ? intent.getAction() : "null"));
         DebugLogger.logState(context, "AlarmReceiver", "alarm fired");
 
         SharedPreferences prefs = context.getSharedPreferences("alarm_prefs", Context.MODE_PRIVATE);
+
+        long now = System.currentTimeMillis();
+        long lastHandledAt = prefs.getLong("last_alarm_handled_at", 0L);
+
+        if (now - lastHandledAt < MIN_DUPLICATE_GAP_MS) {
+            DebugLogger.log(context, "AlarmReceiver", "Duplicate alarm ignored. gapMs=" + (now - lastHandledAt));
+            return;
+        }
+
+        prefs.edit().putLong("last_alarm_handled_at", now).apply();
+
         int alarmCounter = prefs.getInt("alarm_counter", 0);
         DebugLogger.log(context, "AlarmReceiver", "alarmCounter(before)=" + alarmCounter);
 
@@ -22,7 +36,7 @@ public class AlarmReceiver extends BroadcastReceiver {
 
         boolean sendTelegram = false;
 
-        if (alarmCounter >= 30) {
+        if (alarmCounter >= TELEGRAM_REPORT_EVERY_N_ALARMS) {
             sendTelegram = true;
             alarmCounter = 0;
         }
@@ -47,7 +61,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             }
 
             Intent wakeIntent = new Intent(context, WakeActivity.class);
-            wakeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            wakeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             DebugLogger.log(context, "AlarmReceiver", "Starting WakeActivity");
             context.startActivity(wakeIntent);
 

@@ -36,26 +36,32 @@ public class ReportService extends Service {
         DebugLogger.log(this, TAG, "onStartCommand action=" + action + " flags=" + flags + " startId=" + startId + " sendTelegram=" + sendTelegram);
         DebugLogger.logState(this, TAG, "onStartCommand");
 
-        startForeground(NOTIFICATION_ID, new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Telegram Call Notifier")
-                .setContentText("Service running in background")
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setOngoing(true)
-                .build());
+        try {
+            startForeground(NOTIFICATION_ID, new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("Telegram Call Notifier")
+                    .setContentText("Service running in background")
+                    .setSmallIcon(android.R.drawable.stat_notify_sync)
+                    .setOngoing(true)
+                    .build());
 
-        DebugLogger.log(this, TAG, "startForeground success");
+            DebugLogger.log(this, TAG, "startForeground success");
+        } catch (Exception e) {
+            DebugLogger.logError(this, TAG, e);
+        }
 
-        new Thread(() -> {
-            try {
-                DebugLogger.log(ReportService.this, TAG, "Background task started. sendTelegram=" + sendTelegram);
-                if (sendTelegram) {
+        if (sendTelegram) {
+            new Thread(() -> {
+                try {
+                    DebugLogger.log(ReportService.this, TAG, "Background task started. sendTelegram=true");
                     DebugLogger.log(ReportService.this, TAG, "sendReportNow requested");
                     sendReportNow();
+                } catch (Exception e) {
+                    DebugLogger.logError(ReportService.this, TAG, e);
                 }
-            } catch (Exception e) {
-                DebugLogger.logError(ReportService.this, TAG, e);
-            }
-        }, "ReportServiceWorker").start();
+            }, "ReportServiceWorker").start();
+        } else {
+            DebugLogger.log(this, TAG, "Background task skipped because sendTelegram=false");
+        }
 
         return START_STICKY;
     }

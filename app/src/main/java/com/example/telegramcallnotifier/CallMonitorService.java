@@ -78,23 +78,7 @@ public class CallMonitorService extends Service {
     private BatteryReceiver batteryReceiver;
     private int lastBatteryLevel = -1;
     private boolean lastChargingState = false;
-    private static final long PERIODIC_INTERVAL = 60 * 60 * 1000;
-    private static final String ACTION_SEND_PERIODIC_REPORT = "com.example.telegramcallnotifier.ACTION_SEND_PERIODIC_REPORT";
     private boolean serviceStartedMessageSent = false;
-    
-    private final Handler periodicHandler = new Handler(Looper.getMainLooper());
-    private final Runnable periodicRunnable = new Runnable() {
-        @Override
-        public void run() {
-            try {
-                DebugLogger.log(CallMonitorService.this, "CallMonitorService", "periodicRunnable fired");
-                sendPeriodicStatusReport();
-            } finally {
-                periodicHandler.postDelayed(this, PERIODIC_INTERVAL);
-                scheduleNextReport();
-            }
-        }
-    };
 
     @Override
     public void onCreate() {
@@ -165,7 +149,6 @@ public class CallMonitorService extends Service {
 
         // Initialize Battery & Status Monitoring
         startBatteryMonitoring();
-        startPeriodicReporting();
     }
 
     @Override
@@ -178,17 +161,7 @@ public class CallMonitorService extends Service {
             sendGuaranteedMessage("status", "Service started");
             serviceStartedMessageSent = true;
         }
-        if (intent != null && ACTION_SEND_PERIODIC_REPORT.equals(intent.getAction())) {
-            DebugLogger.log(this, "CallMonitorService", "ACTION_SEND_PERIODIC_REPORT triggered from onStartCommand");
-            sendPeriodicStatusReport();
-            restartInProcessPeriodicLoop();
-            scheduleNextReport();
-            return START_STICKY;
-        }
-
         retryPendingNotifications();
-        restartInProcessPeriodicLoop();
-        scheduleNextReport();
         return START_STICKY;
     }
 
@@ -627,7 +600,6 @@ public class CallMonitorService extends Service {
                 try {
                     CustomExceptionHandler.log(CallMonitorService.this, "Ping server");
                     telegramSender.sendPing();
-                    wakeDeviceFor20Seconds();
                     retryPendingNotifications();
                 } catch (Exception e) {
                     CustomExceptionHandler.log(CallMonitorService.this, "Ping error: " + e.getMessage());
@@ -736,86 +708,6 @@ public class CallMonitorService extends Service {
         if (batteryReceiver != null) {
             unregisterReceiver(batteryReceiver);
             batteryReceiver = null;
-        }
-    }
-
-    private void restartInProcessPeriodicLoop() {
-        periodicHandler.removeCallbacks(periodicRunnable);
-        periodicHandler.postDelayed(periodicRunnable, PERIODIC_INTERVAL);
-    }
-
-    private void startPeriodicReporting() {
-        restartInProcessPeriodicLoop();
-        scheduleNextReport();
-    }
-
-    private void scheduleNextReport() {
-        android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        Intent intent = new Intent(this, CallMonitorService.class);
-        intent.setAction(ACTION_SEND_PERIODIC_REPORT);
-        
-        PendingIntent pendingIntent = PendingIntent.getService(this, 0, intent, 
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        long triggerAtMillis = System.currentTimeMillis() + PERIODIC_INTERVAL;
-        DebugLogger.log(this, "CallMonitorService", "scheduleNextReport triggerAt=" + triggerAtMillis + " now=" + System.currentTimeMillis());
-
-        if (alarmManager == null) {
-            DebugLogger.log(this, "CallMonitorService", "scheduleNextReport skipped alarmManager is null");
-            return;
-        }
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAndAllowWhileIdle(
-                        android.app.AlarmManager.RTC_WAKEUP,
-                        triggerAtMillis,
-                        pendingIntent
-                );
-                DebugLogger.log(this, "CallMonitorService", "scheduleNextReport used setAndAllowWhileIdle because exact alarm permission missing");
-                return;
-            }
-
-            if (Build.VERSION.SDK_INT >= 23) {
-                alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent);
-                DebugLogger.log(this, "CallMonitorService", "scheduleNextReport used setExactAndAllowWhileIdle");
-            } else if (Build.VERSION.SDK_INT >= 19) {
-                alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent);
-                DebugLogger.log(this, "CallMonitorService", "scheduleNextReport used setExact");
-            } else {
-                alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent);
-                DebugLogger.log(this, "CallMonitorService", "scheduleNextReport used set");
-            }
-        } catch (SecurityException e) {
-            DebugLogger.logError(this, "CallMonitorService", e);
-            try {
-                alarmManager.setAndAllowWhileIdle(
-                        android.app.AlarmManager.RTC_WAKEUP,
-                        triggerAtMillis,
-                        pendingIntent
-                );
-                DebugLogger.log(this, "CallMonitorService", "scheduleNextReport fallback setAndAllowWhileIdle after SecurityException");
-            } catch (Exception inner) {
-                DebugLogger.logError(this, "CallMonitorService", inner);
-                inner.printStackTrace();
-            }
-        } catch (Exception e) {
-            DebugLogger.logError(this, "CallMonitorService", e);
-        }
-    }
-
-    private void stopPeriodicReporting() {
-        periodicHandler.removeCallbacks(periodicRunnable);
-
-        android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        Intent intent = new Intent(this, CallMonitorService.class);
-        intent.setAction(ACTION_SEND_PERIODIC_REPORT);
-        PendingIntent pendingIntent = PendingIntent.getService(this, 0, intent, 
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            
-        if (alarmManager != null) {
-            alarmManager.cancel(pendingIntent);
-            DebugLogger.log(this, "CallMonitorService", "Periodic report alarm canceled");
         }
     }
 
@@ -996,7 +888,6 @@ public class CallMonitorService extends Service {
         DebugLogger.logState(this, "CallMonitorService", "service destroy");
         
         stopBatteryMonitoring();
-        stopPeriodicReporting();
         retryHandler.removeCallbacks(retryRunnable);
         if (pingRunnable != null) {
             pingHandler.removeCallbacks(pingRunnable);

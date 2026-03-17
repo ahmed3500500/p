@@ -65,8 +65,8 @@ public class TelegramSender {
                 DebugLogger.log(context, TAG, "Opening connection to " + SERVER_URL);
                 conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
-                conn.setConnectTimeout(20000);
-                conn.setReadTimeout(20000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
                 conn.setDoOutput(true);
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 
@@ -133,8 +133,8 @@ public class TelegramSender {
             URL url = new URL(SERVER_URL);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(20000);
-            conn.setReadTimeout(20000);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 

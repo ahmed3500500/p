@@ -15,28 +15,34 @@ public class AlarmScheduler {
         DebugLogger.log(context, "AlarmScheduler", "scheduleNext called delayMs=" + delayMs);
         DebugLogger.logState(context, "AlarmScheduler", "before scheduleNext");
 
-        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-
-        Intent intent = new Intent(context, AlarmReceiver.class);
-        intent.setAction("WAKE_AND_REPORT");
-
-        PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                context,
-                1001,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        long triggerAt = System.currentTimeMillis() + delayMs;
-        DebugLogger.log(context, "AlarmScheduler", "triggerAt=" + triggerAt + " now=" + System.currentTimeMillis());
-
-        if (alarmManager == null) {
-            DebugLogger.log(context, "AlarmScheduler", "alarmManager is null");
-            return;
-        }
-
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+
+            if (alarmManager == null) {
+                DebugLogger.log(context, "AlarmScheduler", "alarmManager is null");
+                return;
+            }
+
+            Intent intent = new Intent(context, AlarmReceiver.class);
+            intent.setAction("WAKE_AND_REPORT");
+
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    1001,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+
+            long now = System.currentTimeMillis();
+            long triggerAt = now + delayMs;
+            DebugLogger.log(context, "AlarmScheduler", "triggerAt=" + triggerAt + " now=" + now);
+
+            boolean canExact = true;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                canExact = alarmManager.canScheduleExactAlarms();
+            }
+
+            if (canExact) {
                 alarmManager.setExactAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
                         triggerAt,
@@ -44,15 +50,15 @@ public class AlarmScheduler {
                 );
                 DebugLogger.log(context, "AlarmScheduler", "setExactAndAllowWhileIdle success");
             } else {
-                alarmManager.setExact(
+                alarmManager.setAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
                         triggerAt,
                         pendingIntent
                 );
-                DebugLogger.log(context, "AlarmScheduler", "setExact success");
+                DebugLogger.log(context, "AlarmScheduler", "fallback setAndAllowWhileIdle used");
             }
-        } catch (SecurityException e) {
-            DebugLogger.logError(context, "AlarmScheduler", e);
+        } catch (SecurityException se) {
+            DebugLogger.logError(context, "AlarmScheduler", se);
         } catch (Exception e) {
             DebugLogger.logError(context, "AlarmScheduler", e);
         }
