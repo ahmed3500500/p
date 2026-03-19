@@ -13,6 +13,12 @@ android {
         versionCode 1
         versionName "1.0"
 
+        def serverApiKey = System.getenv("SERVER_API_KEY") ?: ""
+        def escapedServerApiKey = serverApiKey
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+        buildConfigField "String", "SERVER_API_KEY", "\"${escapedServerApiKey}\""
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
