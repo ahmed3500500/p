@@ -33,6 +33,8 @@ import androidx.core.app.NotificationCompat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 public class CallMonitorService extends Service {
@@ -63,6 +65,7 @@ public class CallMonitorService extends Service {
     private Runnable pingRunnable;
     private BroadcastReceiver connectivityReceiver;
     private volatile boolean retryInProgress = false;
+    private final Set<String> inFlightPendingIds = ConcurrentHashMap.newKeySet();
     private final Handler retryHandler = new Handler(Looper.getMainLooper());
     private final Runnable retryRunnable = new Runnable() {
         @Override
@@ -410,11 +413,26 @@ public class CallMonitorService extends Service {
             PendingNotificationManager.addPending(this, id, finalType, text);
 
             new Thread(() -> {
-                boolean ok = telegramSender.sendToServerSync(finalType, text);
-                if (ok) {
-                    PendingNotificationManager.markSent(CallMonitorService.this, id);
-                } else {
+                if (!inFlightPendingIds.add(id)) {
+                    CustomExceptionHandler.log(CallMonitorService.this,
+                            "sendGuaranteedMessage skipped: already in-flight id=" + id);
+                    return;
+                }
+
+                try {
+                    boolean ok = telegramSender.sendToServerSync(finalType, text);
+                    if (ok) {
+                        PendingNotificationManager.markSent(CallMonitorService.this, id);
+                    } else {
+                        PendingNotificationManager.markRetry(CallMonitorService.this, id);
+                    }
+                } catch (Exception e) {
+                    CustomExceptionHandler.log(CallMonitorService.this,
+                            "sendGuaranteedMessage thread error: " + e.getMessage());
+                    CustomExceptionHandler.logError(CallMonitorService.this, e);
                     PendingNotificationManager.markRetry(CallMonitorService.this, id);
+                } finally {
+                    inFlightPendingIds.remove(id);
                 }
             }).start();
         } catch (Exception e) {
@@ -496,9 +514,11 @@ public class CallMonitorService extends Service {
     private void retryPendingNotifications() {
         if (retryInProgress) return;
         retryInProgress = true;
+
         new Thread(() -> {
             try {
                 if (!isNetworkConnected()) return;
+
                 org.json.JSONArray arr = PendingNotificationManager.getAll(this);
                 CustomExceptionHandler.log(this, "retryPendingNotifications count=" + arr.length());
 
@@ -512,6 +532,8 @@ public class CallMonitorService extends Service {
                     int retryCount = obj.optInt("retryCount", 0);
                     long lastTry = obj.optLong("lastTry", 0);
 
+                    if (id == null || id.trim().isEmpty()) continue;
+
                     long now = System.currentTimeMillis();
                     long waitMs;
                     if (retryCount <= 0) waitMs = 5000;
@@ -521,11 +543,26 @@ public class CallMonitorService extends Service {
 
                     if (now - lastTry < waitMs) continue;
 
-                    boolean ok = telegramSender.sendToServerSync(type, text);
-                    if (ok) {
-                        PendingNotificationManager.markSent(this, id);
-                    } else {
+                    if (!inFlightPendingIds.add(id)) {
+                        CustomExceptionHandler.log(this,
+                                "retryPendingNotifications skipped: already in-flight id=" + id);
+                        continue;
+                    }
+
+                    try {
+                        boolean ok = telegramSender.sendToServerSync(type, text);
+                        if (ok) {
+                            PendingNotificationManager.markSent(this, id);
+                        } else {
+                            PendingNotificationManager.markRetry(this, id);
+                        }
+                    } catch (Exception e) {
+                        CustomExceptionHandler.log(this,
+                                "retryPendingNotifications send error id=" + id + " msg=" + e.getMessage());
+                        CustomExceptionHandler.logError(this, e);
                         PendingNotificationManager.markRetry(this, id);
+                    } finally {
+                        inFlightPendingIds.remove(id);
                     }
                 }
             } catch (Exception e) {
