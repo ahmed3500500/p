@@ -63,6 +63,8 @@ public class ReportService extends Service {
                     sendPeriodicStatusReportNow();
                 } else if ("keep_alive".equals(finalReportType)) {
                     sendKeepAliveWakeReportNow();
+                } else if ("fully_awake_report".equals(finalReportType)) {
+                    sendFullyAwakeReportNow();
                 } else {
                     sendReportNow();
                 }
@@ -143,6 +145,25 @@ public class ReportService extends Service {
 
             DebugLogger.log(this, TAG, "sendPeriodicStatusReportNow building message time=" + time + " network=" + network + " battery=" + battery);
             DebugLogger.log(this, TAG, "sendPeriodicStatusReportNow sending");
+
+            telegramSender.sendStatusMessage(msg);
+        } catch (Exception e) {
+            DebugLogger.logError(this, TAG, e);
+        }
+    }
+
+    private void sendFullyAwakeReportNow() {
+        try {
+            String time = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                    .format(new java.util.Date());
+
+            String msg =
+                    "🟢 تقرير استيقاظ النظام بالكامل!\n" +
+                    "✅ النظام الان بالكام صاحي\n" +
+                    "📱 تم تنشيط النظام والشاشة لمدة 30 ثانية\n" +
+                    "⏰ الوقت: " + time;
+
+            DebugLogger.log(this, TAG, "sendFullyAwakeReportNow sending report time=" + time);
 
             telegramSender.sendStatusMessage(msg);
         } catch (Exception e) {

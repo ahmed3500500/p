@@ -8,7 +8,7 @@ import android.os.Build;
 
 public class AlarmScheduler {
 
-    public static final long TEST_INTERVAL_MS = 30 * 60 * 1000L;
+    public static final long TEST_INTERVAL_MS = 20 * 60 * 1000L; // 20 minutes
     public static final long PROD_INTERVAL_MS = 10 * 60 * 1000L;
 
     public static void scheduleNext(Context context, long delayMs) {

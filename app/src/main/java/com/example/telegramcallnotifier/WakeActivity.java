@@ -23,6 +23,6 @@ public class WakeActivity extends Activity {
                         | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         );
 
-        new android.os.Handler().postDelayed(this::finish, 20000);
+        new android.os.Handler().postDelayed(this::finish, 30000);
     }
 }

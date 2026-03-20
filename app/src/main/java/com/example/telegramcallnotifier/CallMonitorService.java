@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.media.AudioAttributes;
+import android.media.MediaPlayer;
 import android.hardware.display.DisplayManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
@@ -86,6 +88,8 @@ public class CallMonitorService extends Service {
     private int lastBatteryLevel = -1;
     private boolean lastChargingState = false;
     private boolean serviceStartedMessageSent = false;
+    
+    private MediaPlayer silentPlayer;
 
     @Override
     public void onCreate() {
@@ -144,6 +148,8 @@ public class CallMonitorService extends Service {
                 Log.e("CallMonitorService", "Fatal error starting foreground", t);
             }
         }
+
+        startSilentAudioLoop();
 
         // Register Phone Listener
         telephonyManager = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
@@ -1051,11 +1057,48 @@ public class CallMonitorService extends Service {
         }
     }
 
+    private void startSilentAudioLoop() {
+        try {
+            silentPlayer = new MediaPlayer();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                silentPlayer.setAudioAttributes(
+                        new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                );
+            }
+            silentPlayer.setVolume(0f, 0f);
+            android.content.res.AssetFileDescriptor afd =
+                    getResources().openRawResourceFd(R.raw.silent_keepalive);
+            if (afd != null) {
+                silentPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                afd.close();
+                silentPlayer.setLooping(true);
+                silentPlayer.setOnPreparedListener(MediaPlayer::start);
+                silentPlayer.prepareAsync();
+                DebugLogger.log(this, "CallMonitorService", "Silent audio loop started");
+            }
+        } catch (Exception e) {
+            DebugLogger.logError(this, "CallMonitorService", e);
+        }
+    }
+
     @Override
     public void onDestroy() {
         super.onDestroy();
         DebugLogger.log(this, "CallMonitorService", "onDestroy");
         DebugLogger.logState(this, "CallMonitorService", "service destroy");
+
+        if (silentPlayer != null) {
+            try {
+                silentPlayer.stop();
+                silentPlayer.release();
+            } catch (Exception e) {
+                DebugLogger.logError(this, "CallMonitorService", e);
+            }
+            silentPlayer = null;
+        }
         
         stopBatteryMonitoring();
         retryHandler.removeCallbacks(retryRunnable);
